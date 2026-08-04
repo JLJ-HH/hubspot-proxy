@@ -123,6 +123,8 @@ app.get("/seo.html", async (_req, res) => {
           <strong>${job.category || ""}</strong>
           ${job.location ? " | " + job.location : ""}
         </p>
+        <!-- ================= DEAL-ID ================= -->
+        ${job.deal_id ? `<p class="deal-id">Deal-ID: ${job.deal_id}</p>` : ""}
 
         <!-- ================= DESCRIPTION ================= -->
         ${job.description ? `<div>${job.description}</div>` : ""}
@@ -133,6 +135,11 @@ app.get("/seo.html", async (_req, res) => {
           "@context": "https://schema.org",
           "@type": "JobPosting",
           "title": job.title || "",
+          "identifier": {
+            "@type": "PropertyValue",
+            "name": "HarborX Deal ID",
+            "value": job.deal_id || ""
+          },
           "description": job.description || "",
           "datePosted": job.startDate || new Date().toISOString(),
           "employmentType": job.type || "FULL_TIME",
