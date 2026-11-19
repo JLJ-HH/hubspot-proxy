@@ -101,6 +101,86 @@ app.get("/job-data.json", async (_req, res) => {
 
 
 // ======================================================
+// SEO HELPERS (HTML-ESCAPING & DYNAMISCHES validThrough)
+// ======================================================
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function safeJsonLd(obj) {
+  return JSON.stringify(obj).replace(/</g, "\\u003c");
+}
+
+function formatIsoDate(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addDays(date, days) {
+  const copy = new Date(date.getTime());
+  copy.setUTCDate(copy.getUTCDate() + days);
+  return copy;
+}
+
+function addMonths(date, months) {
+  const copy = new Date(date.getTime());
+  copy.setUTCMonth(copy.getUTCMonth() + months);
+  return copy;
+}
+
+function parseFlexibleDate(raw) {
+  if (!raw) return null;
+  const text = String(raw).trim();
+
+  const euMatch = text.match(/\b(\d{2})\.(\d{2})\.(\d{4})\b/);
+  if (euMatch) {
+    const [, dd, mm, yyyy] = euMatch;
+    const parsed = new Date(Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd)));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const isoMatch = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (isoMatch) {
+    const [, yyyy, mm, dd] = isoMatch;
+    const parsed = new Date(Date.UTC(Number(yyyy), Number(mm) - 1, Number(dd)));
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  return null;
+}
+
+function computeValidThrough(job, now = new Date()) {
+  const explicitDeadline = parseFlexibleDate(
+    job.validThrough || job.deadline || job.applicationDeadline || job.closeDate
+  );
+  if (explicitDeadline) {
+    return formatIsoDate(explicitDeadline);
+  }
+
+  const startDate = parseFlexibleDate(job.startDate || job.datelabel);
+  const rawDuration = job.durationMonths ?? job.duration;
+  const durationMonths = Number(rawDuration);
+
+  if (startDate) {
+    const target =
+      Number.isFinite(durationMonths) && durationMonths > 0
+        ? addMonths(startDate, durationMonths)
+        : addDays(startDate, 30);
+
+    if (target.getTime() > now.getTime()) {
+      return formatIsoDate(target);
+    }
+  }
+
+  return formatIsoDate(addDays(now, 30));
+}
+
+// ======================================================
 // SEO ENDPOINT (GOOGLE INDEXIERBAR)
 // ======================================================
 
@@ -108,30 +188,38 @@ app.get("/seo.html", async (_req, res) => {
   try {
     const jobs = await loadJobsFromGraph();
 
-    const html = jobs.map(job => `
+    const html = jobs.map(job => {
+      const title = escapeHtml(job.title || "");
+      const category = escapeHtml(job.category || "");
+      const location = escapeHtml(job.location || "");
+      const dealId = escapeHtml(job.deal_id || "");
+      const description = escapeHtml(job.description || "");
+      const validThrough = computeValidThrough(job);
+
+      return `
       <article class="job">
 
         <!-- ================= JOB TITLE + FIXER LINK ================= -->
         <h2>
           <a href="https://harborx.de/projekte/nato-it-freelancer" target="_blank" rel="noopener">
-            ${job.title || ""}
+            ${title}
           </a>
         </h2>
 
         <!-- ================= META ================= -->
         <p>
-          <strong>${job.category || ""}</strong>
-          ${job.location ? " | " + job.location : ""}
+          <strong>${category}</strong>
+          ${location ? " | " + location : ""}
         </p>
         <!-- ================= DEAL-ID ================= -->
-        ${job.deal_id ? `<p class="deal-id">Deal-ID: ${job.deal_id}</p>` : ""}
+        ${dealId ? `<p class="deal-id">Deal-ID: ${dealId}</p>` : ""}
 
         <!-- ================= DESCRIPTION ================= -->
-        ${job.description ? `<div>${job.description}</div>` : ""}
+        ${description ? `<div>${description}</div>` : ""}
 
         <!-- ================= GOOGLE JOBS SCHEMA ================= -->
         <script type="application/ld+json">
-        ${JSON.stringify({
+        ${safeJsonLd({
           "@context": "https://schema.org",
           "@type": "JobPosting",
           "title": job.title || "",
@@ -141,7 +229,7 @@ app.get("/seo.html", async (_req, res) => {
             "value": job.deal_id || ""
           },
           "description": job.description || "",
-          "datePosted": job.startDate || new Date().toISOString(),
+          "datePosted": job.datePosted || job.startDate || new Date().toISOString(),
           "employmentType": job.type || "FULL_TIME",
           "hiringOrganization": {
             "@type": "Organization",
@@ -154,12 +242,13 @@ app.get("/seo.html", async (_req, res) => {
               "addressLocality": job.location || ""
             }
           },
-          "validThrough": "2026-12-31"
+          "validThrough": validThrough
         })}
         </script>
 
       </article>
-    `).join("");
+    `;
+    }).join("");
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
 
@@ -193,7 +282,7 @@ app.get("/seo.html", async (_req, res) => {
 
     res.status(500).send(`
       <h1>SEO Fehler</h1>
-      <p>${err.message}</p>
+      <p>${escapeHtml(err.message)}</p>
     `);
   }
 });
